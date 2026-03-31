@@ -303,10 +303,23 @@ public class QrCodeTests
     }
 
     [Fact]
+    public void QrUrl_KnownValue()
+    {
+        // MD5 of 64 zero bytes = 3B5D3C7D207E37DCEEEDD301E35E2E58
+        // First 16 hex chars = 3B5D3C7D207E37DC
+        var url = FdmsCryptoService.BuildQrCodeUrl(
+            "https://invoice.zimra.co.zw", 321,
+            new DateTime(2023, 4, 3), 1112223331,
+            Convert.ToBase64String(new byte[64]));
+
+        Assert.Equal("https://invoice.zimra.co.zw/00000003210304202311122233313B5D3C7D207E37DC", url);
+    }
+
+    [Fact]
     public void VerificationCode_Format()
     {
-        var url = "https://invoice.zimra.co.zw/00000003210304202311122233314C8BE27663330417";
-        Assert.Equal("4C8B-E276-6333-0417", FdmsCryptoService.FormatVerificationCode(url));
+        var url = "https://invoice.zimra.co.zw/00000003210304202311122233313B5D3C7D207E37DC";
+        Assert.Equal("3B5D-3C7D-207E-37DC", FdmsCryptoService.FormatVerificationCode(url));
     }
 }
 

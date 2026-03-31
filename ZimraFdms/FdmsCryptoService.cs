@@ -155,8 +155,7 @@ public class FdmsCryptoService
     public static string BuildQrCodeUrl(string qrUrl, int deviceId, DateTime receiptDate, int receiptGlobalNo, string signatureBase64)
     {
         var sigBytes = Convert.FromBase64String(signatureBase64);
-        var sigHex = Convert.ToHexString(sigBytes);
-        var md5Hex = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(sigHex)));
+        var md5Hex = Convert.ToHexString(MD5.HashData(sigBytes));
         var qrData = md5Hex[..16].ToUpperInvariant();
 
         return $"{qrUrl.TrimEnd('/')}/{deviceId:D10}{receiptDate:ddMMyyyy}{receiptGlobalNo:D10}{qrData}";
