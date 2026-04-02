@@ -1,0 +1,263 @@
+@page "/receipts"
+@inject DeviceManager DeviceManager
+
+<h1 class="page-title">Receipt History</h1>
+
+@if (_selectedDeviceId == 0)
+{
+    <div class="alert alert-warning">No device selected.</div>
+}
+else if (_loading)
+{
+    <p>Loading receipts...</p>
+}
+else
+{
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center;">
+        @foreach (var tab in _tabs)
+        {
+            <button class="btn @(_activeTab == tab ? "btn-primary" : "btn-outline")"
+                    @onclick="() => { _activeTab = tab; _selectedReceipt = null; }">
+                @tab
+            </button>
+        }
+        <span style="margin-left:auto;color:var(--gray-500);font-size:13px;">
+            Fiscal Day @_fiscalDayNo &mdash; @_filtered.Count receipt(s)
+        </span>
+    </div>
+
+    <div style="display:flex;gap:16px;">
+        <div style="flex:1;min-width:0;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Global No</th>
+                        <th>Counter</th>
+                        <th>Invoice No</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Total</th>
+                        <th>Currency</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (_filtered.Count == 0)
+                    {
+                        <tr><td colspan="8" style="text-align:center;color:var(--gray-500);padding:24px;">No receipts found.</td></tr>
+                    }
+                    @foreach (var r in _filtered)
+                    {
+                        var isSelected = _selectedReceipt?.Id == r.Id;
+                        <tr style="cursor:pointer;background:@(isSelected ? "var(--primary-light, #eff6ff)" : "");"
+                            @onclick="() => SelectReceipt(r)">
+                            <td>@r.Receipt.ReceiptGlobalNo</td>
+                            <td>@r.Receipt.ReceiptCounter</td>
+                            <td>@r.Receipt.InvoiceNo</td>
+                            <td>@r.Receipt.ReceiptType</td>
+                            <td>@r.Receipt.ReceiptDate.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td style="text-align:right;">@r.Receipt.ReceiptTotal.ToString("N2")</td>
+                            <td>@r.Receipt.ReceiptCurrency</td>
+                            <td>
+                                <span class="status-badge @StatusClass(r.Status)">
+                                    @r.Status
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+}
+
+@if (_selectedReceipt != null)
+{
+    <div class="modal-overlay" @onclick="() => _selectedReceipt = null">
+        <div class="modal-dialog" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>Receipt #@_selectedReceipt.Receipt.ReceiptGlobalNo</h2>
+                <button class="modal-close" @onclick="() => _selectedReceipt = null">&times;</button>
+            </div>
+            <div class="modal-body">
+                @* QR Code *@
+                @if (!string.IsNullOrEmpty(_qrCodeBase64))
+                {
+                    <div class="qr-code">
+                        <a href="@_selectedReceipt.QrCodeUrl" target="_blank" title="Scan or click to verify">
+                            <img src="data:image/png;base64,@_qrCodeBase64" alt="QR Code" style="width:180px;height:180px;" />
+                        </a>
+                    </div>
+                }
+
+                @* Status + Verification *@
+                <div style="text-align:center;margin-bottom:16px;">
+                    <span class="status-badge @StatusClass(_selectedReceipt.Status)" style="font-size:14px;padding:5px 14px;">
+                        @_selectedReceipt.Status
+                    </span>
+                    @if (!string.IsNullOrEmpty(_selectedReceipt.VerificationCode))
+                    {
+                        <div style="margin-top:8px;">
+                            <code style="font-size:13px;color:var(--gray-700);">@_selectedReceipt.VerificationCode</code>
+                        </div>
+                    }
+                </div>
+
+                @* Details grid *@
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:16px;">
+                    <div><span style="color:var(--gray-500);display:block;">Invoice No</span><strong>@_selectedReceipt.Receipt.InvoiceNo</strong></div>
+                    <div><span style="color:var(--gray-500);display:block;">Type</span><strong>@_selectedReceipt.Receipt.ReceiptType</strong></div>
+                    <div><span style="color:var(--gray-500);display:block;">Date</span><strong>@_selectedReceipt.Receipt.ReceiptDate.ToString("yyyy-MM-dd HH:mm:ss")</strong></div>
+                    <div><span style="color:var(--gray-500);display:block;">Total</span><strong>@_selectedReceipt.Receipt.ReceiptTotal.ToString("N2") @_selectedReceipt.Receipt.ReceiptCurrency</strong></div>
+                    <div><span style="color:var(--gray-500);display:block;">Global No / Counter</span><strong>@_selectedReceipt.Receipt.ReceiptGlobalNo / @_selectedReceipt.Receipt.ReceiptCounter</strong></div>
+                    <div><span style="color:var(--gray-500);display:block;">Fiscal Day</span><strong>@_selectedReceipt.FiscalDayNo</strong></div>
+                    @if (_selectedReceipt.FdmsReceiptId.HasValue)
+                    {
+                        <div><span style="color:var(--gray-500);display:block;">FDMS ID</span><strong>@_selectedReceipt.FdmsReceiptId</strong></div>
+                    }
+                    @if (_selectedReceipt.SubmittedAt.HasValue)
+                    {
+                        <div><span style="color:var(--gray-500);display:block;">Submitted</span><strong>@_selectedReceipt.SubmittedAt.Value.ToString("yyyy-MM-dd HH:mm")</strong></div>
+                    }
+                </div>
+
+                @* Errors *@
+                @if (!string.IsNullOrEmpty(_selectedReceipt.ErrorMessage))
+                {
+                    <div class="alert alert-danger" style="font-size:13px;">
+                        @_selectedReceipt.ErrorMessage
+                        @if (!string.IsNullOrEmpty(_selectedReceipt.FdmsErrorCode))
+                        {
+                            <span> (@_selectedReceipt.FdmsErrorCode)</span>
+                        }
+                    </div>
+                }
+                @if (_selectedReceipt.ValidationErrors is { Count: > 0 })
+                {
+                    <div class="alert alert-warning" style="font-size:13px;">
+                        @foreach (var ve in _selectedReceipt.ValidationErrors)
+                        {
+                            <div>@ve</div>
+                        }
+                    </div>
+                }
+
+                @* Line Items *@
+                @if (_selectedReceipt.Receipt.ReceiptLines.Count > 0)
+                {
+                    <div style="margin-bottom:16px;">
+                        <div style="font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;color:var(--gray-500);">Line Items</div>
+                        <table class="data-table">
+                            <thead><tr><th>#</th><th>Name</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Total</th></tr></thead>
+                            <tbody>
+                                @foreach (var line in _selectedReceipt.Receipt.ReceiptLines)
+                                {
+                                    <tr>
+                                        <td>@line.ReceiptLineNo</td>
+                                        <td>@line.ReceiptLineName</td>
+                                        <td style="text-align:right;">@line.ReceiptLineQuantity.ToString("N2")</td>
+                                        <td style="text-align:right;">@line.ReceiptLineTotal.ToString("N2")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+
+                @* Taxes *@
+                @if (_selectedReceipt.Receipt.ReceiptTaxes.Count > 0)
+                {
+                    <div>
+                        <div style="font-size:12px;font-weight:600;margin-bottom:6px;text-transform:uppercase;color:var(--gray-500);">Taxes</div>
+                        <table class="data-table">
+                            <thead><tr><th>Rate</th><th style="text-align:right;">Tax Amount</th><th style="text-align:right;">Sales w/ Tax</th></tr></thead>
+                            <tbody>
+                                @foreach (var tax in _selectedReceipt.Receipt.ReceiptTaxes)
+                                {
+                                    <tr>
+                                        <td>@(tax.TaxPercent.HasValue ? $"{tax.TaxPercent:N1}%" : "-")</td>
+                                        <td style="text-align:right;">@tax.TaxAmount.ToString("N2")</td>
+                                        <td style="text-align:right;">@tax.SalesAmountWithTax.ToString("N2")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter(Name = "SelectedDeviceId")] public int _selectedDeviceId { get; set; }
+    [CascadingParameter(Name = "UserDevices")] public List<UserDevice> _devices { get; set; } = new();
+
+    private bool _loading = true;
+    private int _fiscalDayNo;
+    private List<PersistedReceipt> _all = new();
+    private List<PersistedReceipt> _filtered = new();
+    private PersistedReceipt? _selectedReceipt;
+    private string? _qrCodeBase64;
+
+    private static readonly string[] _tabs = { "All", "Pending", "Submitted", "Failed" };
+    private string _activeTab = "All";
+
+    private void SelectReceipt(PersistedReceipt r)
+    {
+        _selectedReceipt = r;
+        _qrCodeBase64 = null;
+        if (!string.IsNullOrEmpty(r.QrCodeUrl))
+        {
+            try
+            {
+                using var qrGenerator = new QRCoder.QRCodeGenerator();
+                using var qrCodeData = qrGenerator.CreateQrCode(r.QrCodeUrl, QRCoder.QRCodeGenerator.ECCLevel.M);
+                using var qrCode = new QRCoder.PngByteQRCode(qrCodeData);
+                _qrCodeBase64 = Convert.ToBase64String(qrCode.GetGraphic(6));
+            }
+            catch { }
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_selectedDeviceId == 0) { _loading = false; return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            _fiscalDayNo = svc.CurrentFiscalDayNo;
+            var zimraDeviceId = _devices.FirstOrDefault(d => d.Id == _selectedDeviceId)?.DeviceID ?? 0;
+            _all = svc.Store.GetReceiptsForDay(zimraDeviceId, _fiscalDayNo);
+            ApplyFilter();
+        }
+        catch { }
+        _loading = false;
+    }
+
+    private void ApplyFilter()
+    {
+        _filtered = _activeTab switch
+        {
+            "Pending"   => _all.Where(r => r.Status == ReceiptQueueStatus.Pending || r.Status == ReceiptQueueStatus.Submitting).ToList(),
+            "Submitted" => _all.Where(r => r.Status == ReceiptQueueStatus.Submitted).ToList(),
+            "Failed"    => _all.Where(r => r.Status == ReceiptQueueStatus.Failed).ToList(),
+            _           => _all.ToList()
+        };
+    }
+
+    private static string StatusClass(ReceiptQueueStatus status) => status switch
+    {
+        ReceiptQueueStatus.Submitted  => "open",
+        ReceiptQueueStatus.Failed     => "closed",
+        ReceiptQueueStatus.Submitting => "warning",
+        _                             => "pending"
+    };
+}

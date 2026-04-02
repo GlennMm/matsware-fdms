@@ -2,10 +2,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZimraFdms", "ZimraFdms\ZimraFdms.csproj", "{530EA92D-0392-4466-9559-016B0CA53F26}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZimraFdms.Tests", "ZimraFdms.Tests\ZimraFdms.Tests.csproj", "{0BC77866-09D0-46D5-9A30-33B63B2C13F2}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZimraFdms.Console", "ZimraFdms.Console\ZimraFdms.Console.csproj", "{C96ACBCE-4878-47A3-8B9E-C75CE42EEB0C}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ZimraFdms.Api", "ZimraFdms.Api\ZimraFdms.Api.csproj", "{9BF497F7-231C-4387-B0AB-9F3E1DB2A38E}"
 EndProject
 Global

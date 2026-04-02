@@ -1,0 +1,62 @@
+@page "/login"
+@layout ZimraFdms.Api.Components.Layout.MainLayout
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager Nav
+
+<div class="login-card">
+    <h1>ZIMRA FDMS</h1>
+    <p class="subtitle">Sign in to manage your fiscal devices</p>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+
+    <EditForm Model="_model" OnValidSubmit="HandleLogin" FormName="login">
+        <div class="form-group">
+            <label class="form-label">Username</label>
+            <InputText class="form-input" @bind-Value="_model.Username" />
+        </div>
+        <div class="form-group">
+            <label class="form-label">Password</label>
+            <InputText class="form-input" type="password" @bind-Value="_model.Password" />
+        </div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;" type="submit" disabled="@_loading">
+            @(_loading ? "Signing in..." : "Sign In")
+        </button>
+    </EditForm>
+
+    <p style="margin-top:16px;text-align:center;font-size:14px;color:var(--gray-500);">
+        Don't have an account? <a href="/register">Register</a>
+    </p>
+</div>
+
+@code {
+    private LoginModel _model = new();
+    private string? _error;
+    private bool _loading;
+
+    private class LoginModel
+    {
+        public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+
+    private async Task HandleLogin()
+    {
+        _loading = true;
+        _error = null;
+
+        using var scope = ScopeFactory.CreateScope();
+        var authService = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Services.AuthService>();
+        var user = await authService.ValidateLoginAsync(_model.Username, _model.Password);
+        if (user == null)
+        {
+            _error = "Invalid username or password.";
+            _loading = false;
+            return;
+        }
+
+        Nav.NavigateTo($"/api/auth/signin?userId={user.Id}", forceLoad: true);
+    }
+}

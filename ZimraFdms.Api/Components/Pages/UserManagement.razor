@@ -1,0 +1,141 @@
+@page "/users"
+@inject IServiceScopeFactory ScopeFactory
+@using Microsoft.EntityFrameworkCore
+
+<h1 class="page-title">User Management</h1>
+
+@if (_user?.Role == UserRole.Operator)
+{
+    <div class="alert alert-danger">Access denied.</div>
+    return;
+}
+
+@if (!string.IsNullOrEmpty(_message))
+{
+    <div class="alert @(_messageIsError ? "alert-danger" : "alert-success")">@_message</div>
+}
+
+@if (_showAddForm)
+{
+    <div class="card" style="margin-bottom:16px;">
+        <h3 style="margin-bottom:12px;">Create Operator</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="form-group">
+                <label class="form-label">Username</label>
+                <input class="form-input" @bind="_newUsername" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Email</label>
+                <input class="form-input" type="email" @bind="_newEmail" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Temp Password</label>
+                <input class="form-input" @bind="_newPassword" />
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" @onclick="CreateOperator">Create</button>
+            <button class="btn btn-outline" @onclick="() => _showAddForm = false">Cancel</button>
+        </div>
+    </div>
+}
+else if (_user?.Role == UserRole.Admin)
+{
+    <button class="btn btn-primary" style="margin-bottom:16px;" @onclick="() => _showAddForm = true">Create Operator</button>
+}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Username</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Created</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var u in _users)
+        {
+            <tr>
+                <td>@u.Username</td>
+                <td>@u.Email</td>
+                <td><span class="role-badge @u.Role.ToString().ToLower()">@u.Role</span></td>
+                <td>@u.CreatedAt.ToString("yyyy-MM-dd")</td>
+                <td>
+                    <span class="status-badge @(u.IsActive ? "open" : "closed")">
+                        @(u.IsActive ? "Active" : "Inactive")
+                    </span>
+                </td>
+                <td>
+                    @if (u.Id != _user?.Id)
+                    {
+                        <button class="btn btn-outline btn-sm" @onclick="() => ToggleUser(u)">
+                            @(u.IsActive ? "Deactivate" : "Activate")
+                        </button>
+                    }
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    [CascadingParameter(Name = "CurrentUser")] public AppUser? _user { get; set; }
+
+    private List<AppUser> _users = new();
+    private bool _showAddForm;
+    private string _newUsername = "", _newEmail = "", _newPassword = "";
+    private string? _message;
+    private bool _messageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadUsersAsync();
+    }
+
+    private async Task LoadUsersAsync()
+    {
+        if (_user == null) return;
+        using var scope = ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Data.AppDbContext>();
+        if (_user.Role == UserRole.SuperAdmin)
+            _users = await db.Users.OrderBy(u => u.Username).ToListAsync();
+        else
+            _users = await db.Users
+                .Where(u => u.CreatedByUserId == _user.Id)
+                .OrderBy(u => u.Username)
+                .ToListAsync();
+    }
+
+    private async Task CreateOperator()
+    {
+        _message = null;
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var auth = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Services.AuthService>();
+            await auth.CreateOperatorAsync(_newUsername, _newEmail, _newPassword, _user!.Id);
+            _message = $"Operator '{_newUsername}' created.";
+            _messageIsError = false;
+            _showAddForm = false;
+            _newUsername = _newEmail = _newPassword = "";
+            await LoadUsersAsync();
+        }
+        catch (Exception ex) { _message = ex.Message; _messageIsError = true; }
+    }
+
+    private async Task ToggleUser(AppUser u)
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Data.AppDbContext>();
+        var user = await db.Users.FindAsync(u.Id);
+        if (user == null) return;
+        user.IsActive = !user.IsActive;
+        await db.SaveChangesAsync();
+        u.IsActive = user.IsActive;
+        _message = $"User '{u.Username}' {(user.IsActive ? "activated" : "deactivated")}.";
+        _messageIsError = false;
+    }
+}

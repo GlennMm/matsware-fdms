@@ -1,0 +1,106 @@
+@inherits LayoutComponentBase
+@inject IHttpContextAccessor HttpContextAccessor
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager Nav
+
+@if (_user == null)
+{
+    @if (!_isAuthPage)
+    {
+        <div class="login-container">
+            <p>Redirecting to login...</p>
+        </div>
+    }
+    else
+    {
+        <div class="login-container">
+            @Body
+        </div>
+    }
+}
+else
+{
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>ZIMRA FDMS</h2>
+            </div>
+            <NavMenu User="_user" Devices="_devices" SelectedDeviceId="_selectedDeviceId"
+                     OnDeviceChanged="OnDeviceChanged" />
+        </aside>
+        <div class="main-area">
+            <header class="topbar">
+                <div>
+                    <span style="font-weight:600;">@_currentDeviceLabel</span>
+                </div>
+                <div class="topbar-user">
+                    <span class="role-badge @_user.Role.ToString().ToLower()">@_user.Role</span>
+                    <span>@_user.Username</span>
+                    <button class="btn btn-outline btn-sm" @onclick="Logout">Logout</button>
+                </div>
+            </header>
+            <main class="page-content">
+                <CascadingValue Value="_user" Name="CurrentUser">
+                <CascadingValue Value="_selectedDeviceId" Name="SelectedDeviceId">
+                <CascadingValue Value="_devices" Name="UserDevices">
+                    @Body
+                </CascadingValue>
+                </CascadingValue>
+                </CascadingValue>
+            </main>
+        </div>
+    </div>
+}
+
+@code {
+    private AppUser? _user;
+    private List<UserDevice> _devices = new();
+    private int _selectedDeviceId;
+    private string _currentDeviceLabel = "No device selected";
+    private bool _isAuthPage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = Nav.ToBaseRelativePath(Nav.Uri).ToLower();
+        _isAuthPage = uri.StartsWith("login") || uri.StartsWith("register");
+
+        var httpContext = HttpContextAccessor.HttpContext;
+        var userIdClaim = httpContext?.User?.FindFirst("UserId")?.Value;
+
+        if (userIdClaim == null && !_isAuthPage)
+        {
+            Nav.NavigateTo("/login", forceLoad: true);
+            return;
+        }
+
+        if (userIdClaim != null && int.TryParse(userIdClaim, out var userId))
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Data.AppDbContext>();
+            var authService = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Services.AuthService>();
+            _user = await db.Users.FindAsync(userId);
+            if (_user != null)
+            {
+                _devices = await authService.GetAccessibleDevicesAsync(_user);
+                if (_devices.Count > 0)
+                {
+                    _selectedDeviceId = _devices[0].Id;
+                    _currentDeviceLabel = _devices[0].DeviceLabel;
+                }
+            }
+        }
+    }
+
+    private void OnDeviceChanged(int deviceId)
+    {
+        _selectedDeviceId = deviceId;
+        var device = _devices.FirstOrDefault(d => d.Id == deviceId);
+        _currentDeviceLabel = device?.DeviceLabel ?? "No device selected";
+        StateHasChanged();
+    }
+
+    private void Logout()
+    {
+        Nav.NavigateTo("/api/auth/logout", forceLoad: true);
+    }
+}

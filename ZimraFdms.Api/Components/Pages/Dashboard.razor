@@ -1,0 +1,147 @@
+@page "/"
+@inject DeviceManager DeviceManager
+
+<h1 class="page-title">Dashboard</h1>
+
+@if (_selectedDeviceId == 0)
+{
+    <div class="alert alert-warning">
+        No device selected. <a href="/devices">Add your first device</a> to get started.
+    </div>
+}
+else if (_loading)
+{
+    <p>Loading device status...</p>
+}
+else
+{
+    <div class="card-grid">
+        <div class="card">
+            <div class="card-title">Device</div>
+            <div style="font-size:16px;font-weight:600;">@_deviceLabel</div>
+            <div style="font-size:13px;color:var(--gray-500);margin-top:4px;">
+                ID: @_deviceZimraId &middot; Serial: @_deviceSerial
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Fiscal Day</div>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <span class="card-value">@_fiscalDayNo</span>
+                <span class="status-badge @(_dayOpen ? "open" : "closed")">
+                    @(_dayOpen ? "Open" : "Closed")
+                </span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Pending</div>
+            <div class="card-value warning">@_pending</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Submitted</div>
+            <div class="card-value success">@_submitted</div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Failed</div>
+            <div class="card-value danger">@_failed</div>
+        </div>
+    </div>
+
+    <h3 style="margin-bottom:12px;">Quick Actions</h3>
+    <div class="quick-actions">
+        @if (!_dayOpen)
+        {
+            <button class="btn btn-success" @onclick="OpenDay">Open Fiscal Day</button>
+        }
+        else
+        {
+            <a class="btn btn-primary" href="/submit-receipt">Submit Invoice</a>
+            <button class="btn btn-outline" @onclick="CloseDay" disabled="@_closingDay">Close Fiscal Day</button>
+        }
+    </div>
+
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <div class="alert @(_messageIsError ? "alert-danger" : "alert-success")" style="margin-top:16px;">@_message</div>
+    }
+}
+
+@code {
+    [CascadingParameter(Name = "SelectedDeviceId")] public int _selectedDeviceId { get; set; }
+    [CascadingParameter(Name = "UserDevices")] public List<UserDevice> _devices { get; set; } = new();
+
+    private bool _loading = true;
+    private string _deviceLabel = "";
+    private int _deviceZimraId;
+    private string _deviceSerial = "";
+    private int _fiscalDayNo;
+    private bool _dayOpen;
+    private int _pending, _submitted, _failed;
+    private string? _message;
+    private bool _messageIsError;
+    private bool _closingDay;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_selectedDeviceId == 0) { _loading = false; return; }
+        await LoadStatusAsync();
+    }
+
+    private async Task LoadStatusAsync()
+    {
+        _loading = true;
+        try
+        {
+            var device = _devices.FirstOrDefault(d => d.Id == _selectedDeviceId);
+            _deviceLabel = device?.DeviceLabel ?? "";
+            _deviceZimraId = device?.DeviceID ?? 0;
+            _deviceSerial = device?.DeviceSerialNo ?? "";
+
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            _fiscalDayNo = svc.CurrentFiscalDayNo;
+            _dayOpen = svc.IsDayOpen;
+            _pending = svc.PendingCount;
+            _submitted = svc.SubmittedCount;
+            _failed = svc.FailedCount;
+        }
+        catch (Exception ex)
+        {
+            _message = ex.Message;
+            _messageIsError = true;
+        }
+        _loading = false;
+    }
+
+    private async Task OpenDay()
+    {
+        _message = null;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            var (resp, resumed) = await svc.OpenDayAsync();
+            _message = resumed ? $"Resumed fiscal day {resp.FiscalDayNo}" : $"Opened fiscal day {resp.FiscalDayNo}";
+            _messageIsError = false;
+            await LoadStatusAsync();
+        }
+        catch (Exception ex) { _message = ex.Message; _messageIsError = true; }
+    }
+
+    private async Task CloseDay()
+    {
+        _closingDay = true;
+        _message = null;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            await svc.CloseDayAsync();
+            _message = "Fiscal day closed successfully.";
+            _messageIsError = false;
+            await LoadStatusAsync();
+        }
+        catch (Exception ex) { _message = ex.Message; _messageIsError = true; }
+        _closingDay = false;
+    }
+}

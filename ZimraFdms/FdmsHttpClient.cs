@@ -55,6 +55,39 @@ public class FdmsHttpClient
         _logger = logger;
     }
 
+    /// <summary>
+    /// Constructor for direct injection of pre-built HttpClient instances.
+    /// Intended for multi-device scenarios where DeviceManager creates per-device
+    /// HTTP clients with distinct mTLS certificates.
+    /// The <paramref name="publicClient"/> is used for public (no-cert) endpoints
+    /// and the <paramref name="deviceClient"/> is used for device (mTLS) endpoints.
+    /// </summary>
+    public FdmsHttpClient(HttpClient publicClient, HttpClient deviceClient, FdmsOptions options, ILogger<FdmsHttpClient> logger)
+    {
+        _httpFactory = new DirectHttpClientFactory(publicClient, deviceClient);
+        _options = options;
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Minimal IHttpClientFactory implementation that serves two pre-built HttpClient
+    /// instances by name ("FdmsPublic" and "FdmsDevice"), enabling the direct-injection
+    /// constructor to reuse the existing SendAsync / SubmitFileAsync logic unchanged.
+    /// </summary>
+    private sealed class DirectHttpClientFactory : IHttpClientFactory
+    {
+        private readonly HttpClient _publicClient;
+        private readonly HttpClient _deviceClient;
+
+        public DirectHttpClientFactory(HttpClient publicClient, HttpClient deviceClient)
+        {
+            _publicClient = publicClient;
+            _deviceClient = deviceClient;
+        }
+
+        public HttpClient CreateClient(string name) => name == "FdmsDevice" ? _deviceClient : _publicClient;
+    }
+
     // ═══════════════════════════════════════════════════════════════
     //  PUBLIC endpoints  (no client cert)
     // ═══════════════════════════════════════════════════════════════

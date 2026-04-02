@@ -1,0 +1,122 @@
+@page "/fiscal-day"
+@inject DeviceManager DeviceManager
+
+<h1 class="page-title">Fiscal Day Management</h1>
+
+@if (_selectedDeviceId == 0)
+{
+    <div class="alert alert-warning">No device selected.</div>
+}
+else if (_loading)
+{
+    <p>Loading...</p>
+}
+else
+{
+    <div class="card-grid">
+        <div class="card" style="text-align:center;">
+            <div class="card-title">Current Fiscal Day</div>
+            <div class="card-value" style="font-size:48px;">@_fiscalDayNo</div>
+            <span class="status-badge @(_dayOpen ? "open" : "closed")" style="font-size:16px;margin-top:8px;">
+                @(_dayOpen ? "OPEN" : "CLOSED")
+            </span>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Queue Status</div>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+                <div>Pending: <strong style="color:var(--warning);">@_pending</strong></div>
+                <div>Submitted: <strong style="color:var(--success);">@_submitted</strong></div>
+                <div>Failed: <strong style="color:var(--danger);">@_failed</strong></div>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_message))
+    {
+        <div class="alert @(_messageIsError ? "alert-danger" : "alert-success")">@_message</div>
+    }
+
+    <div style="display:flex;gap:10px;margin-top:16px;">
+        @if (!_dayOpen)
+        {
+            <button class="btn btn-success" @onclick="OpenDay" disabled="@_busy">
+                @(_busy ? "Opening..." : "Open Fiscal Day")
+            </button>
+        }
+        else
+        {
+            @if (_pending > 0)
+            {
+                <div class="alert alert-warning" style="margin:0;">
+                    @_pending receipt(s) still pending. Closing may fail if receipts haven't been submitted.
+                </div>
+            }
+            <button class="btn btn-danger" @onclick="CloseDay" disabled="@_busy">
+                @(_busy ? "Closing..." : "Close Fiscal Day")
+            </button>
+        }
+    </div>
+}
+
+@code {
+    [CascadingParameter(Name = "SelectedDeviceId")] public int _selectedDeviceId { get; set; }
+
+    private bool _loading = true, _busy;
+    private int _fiscalDayNo, _pending, _submitted, _failed;
+    private bool _dayOpen;
+    private string? _message;
+    private bool _messageIsError;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_selectedDeviceId == 0) { _loading = false; return; }
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            _fiscalDayNo = svc.CurrentFiscalDayNo;
+            _dayOpen = svc.IsDayOpen;
+            _pending = svc.PendingCount;
+            _submitted = svc.SubmittedCount;
+            _failed = svc.FailedCount;
+        }
+        catch (Exception ex) { _message = ex.Message; _messageIsError = true; }
+        _loading = false;
+    }
+
+    private async Task OpenDay()
+    {
+        _busy = true; _message = null;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            var (resp, resumed) = await svc.OpenDayAsync();
+            _message = resumed ? $"Resumed fiscal day {resp.FiscalDayNo}" : $"Opened fiscal day {resp.FiscalDayNo}";
+            _messageIsError = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { _message = ex.Message; _messageIsError = true; }
+        _busy = false;
+    }
+
+    private async Task CloseDay()
+    {
+        _busy = true; _message = null;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            await svc.CloseDayAsync();
+            _message = "Fiscal day closed successfully.";
+            _messageIsError = false;
+            await LoadAsync();
+        }
+        catch (Exception ex) { _message = ex.Message; _messageIsError = true; }
+        _busy = false;
+    }
+}

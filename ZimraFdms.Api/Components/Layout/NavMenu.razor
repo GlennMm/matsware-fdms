@@ -1,0 +1,41 @@
+<div class="device-selector">
+    <label class="nav-section">Device</label>
+    <select value="@SelectedDeviceId" @onchange="DeviceChanged">
+        @if (Devices.Count == 0)
+        {
+            <option value="0">No devices</option>
+        }
+        @foreach (var d in Devices)
+        {
+            <option value="@d.Id">@d.DeviceLabel (@d.DeviceID)</option>
+        }
+    </select>
+</div>
+
+<nav class="sidebar-nav">
+    <div class="nav-section">Main</div>
+    <a class="nav-link" href="/">Dashboard</a>
+    <a class="nav-link" href="/fiscal-day">Fiscal Day</a>
+    <a class="nav-link" href="/submit-receipt">Submit Receipt</a>
+    <a class="nav-link" href="/receipts">Receipt History</a>
+
+    @if (User?.Role is UserRole.Admin or UserRole.SuperAdmin)
+    {
+        <div class="nav-section" style="margin-top:16px;">Management</div>
+        <a class="nav-link" href="/devices">Devices</a>
+        <a class="nav-link" href="/users">Users</a>
+    }
+</nav>
+
+@code {
+    [Parameter] public AppUser? User { get; set; }
+    [Parameter] public List<UserDevice> Devices { get; set; } = new();
+    [Parameter] public int SelectedDeviceId { get; set; }
+    [Parameter] public EventCallback<int> OnDeviceChanged { get; set; }
+
+    private async Task DeviceChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+            await OnDeviceChanged.InvokeAsync(id);
+    }
+}

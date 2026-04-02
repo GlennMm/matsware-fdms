@@ -1,0 +1,80 @@
+@page "/register"
+@layout ZimraFdms.Api.Components.Layout.MainLayout
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager Nav
+
+<div class="login-card">
+    <h1>Create Account</h1>
+    <p class="subtitle">Register to manage your ZIMRA fiscal devices</p>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="alert alert-danger">@_error</div>
+    }
+
+    <EditForm Model="_model" OnValidSubmit="HandleRegister" FormName="register">
+        <div class="form-group">
+            <label class="form-label">Username</label>
+            <InputText class="form-input" @bind-Value="_model.Username" />
+        </div>
+        <div class="form-group">
+            <label class="form-label">Email</label>
+            <InputText class="form-input" type="email" @bind-Value="_model.Email" />
+        </div>
+        <div class="form-group">
+            <label class="form-label">Password</label>
+            <InputText class="form-input" type="password" @bind-Value="_model.Password" />
+        </div>
+        <div class="form-group">
+            <label class="form-label">Confirm Password</label>
+            <InputText class="form-input" type="password" @bind-Value="_model.ConfirmPassword" />
+        </div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center;" type="submit" disabled="@_loading">
+            @(_loading ? "Creating account..." : "Register")
+        </button>
+    </EditForm>
+
+    <p style="margin-top:16px;text-align:center;font-size:14px;color:var(--gray-500);">
+        Already have an account? <a href="/login">Sign in</a>
+    </p>
+</div>
+
+@code {
+    private RegisterModel _model = new();
+    private string? _error;
+    private bool _loading;
+
+    private class RegisterModel
+    {
+        public string Username { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string ConfirmPassword { get; set; } = "";
+    }
+
+    private async Task HandleRegister()
+    {
+        _loading = true;
+        _error = null;
+
+        if (_model.Password != _model.ConfirmPassword)
+        {
+            _error = "Passwords do not match.";
+            _loading = false;
+            return;
+        }
+
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var authService = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Services.AuthService>();
+            var user = await authService.RegisterAdminAsync(_model.Username, _model.Email, _model.Password);
+            Nav.NavigateTo($"/api/auth/signin?userId={user.Id}", forceLoad: true);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+            _loading = false;
+        }
+    }
+}

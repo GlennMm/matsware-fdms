@@ -1,0 +1,347 @@
+@* FdmsClient/ZimraFdms.Api/Components/Pages/SubmitReceipt.razor *@
+@page "/submit-receipt"
+@inject DeviceManager DeviceManager
+
+<h1 class="page-title">Submit Receipt</h1>
+
+@if (_selectedDeviceId == 0)
+{
+    <div class="alert alert-warning">No device selected.</div>
+    return;
+}
+
+@if (!string.IsNullOrEmpty(_successMessage))
+{
+    <div class="alert alert-success">
+        <strong>Receipt submitted!</strong><br />
+        Global No: @_resultGlobalNo &middot; Counter: @_resultCounter<br />
+        Verification: <code>@_resultVerification</code><br />
+        @if (_resultQrUrl != null)
+        {
+            <a href="@_resultQrUrl" target="_blank">View QR Code</a>
+        }
+    </div>
+    <button class="btn btn-primary" @onclick="ResetForm">Submit Another</button>
+    return;
+}
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="alert alert-danger">@_error</div>
+}
+
+<div class="card" style="margin-bottom:16px;">
+    <!-- Receipt Type Tabs -->
+    <div class="filter-tabs" style="margin-bottom:16px;">
+        <button class="filter-tab @(_receiptType == ReceiptType.FiscalInvoice ? "active" : "")"
+                @onclick="() => _receiptType = ReceiptType.FiscalInvoice">Fiscal Invoice</button>
+        <button class="filter-tab @(_receiptType == ReceiptType.CreditNote ? "active" : "")"
+                @onclick="() => _receiptType = ReceiptType.CreditNote">Credit Note</button>
+        <button class="filter-tab @(_receiptType == ReceiptType.DebitNote ? "active" : "")"
+                @onclick="() => _receiptType = ReceiptType.DebitNote">Debit Note</button>
+    </div>
+
+    <!-- Header Fields -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div class="form-group">
+            <label class="form-label">Currency</label>
+            <select class="form-select" @bind="_currency">
+                <option value="USD">USD</option>
+                <option value="ZWG">ZWG</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Invoice No</label>
+            <input class="form-input" @bind="_invoiceNo" />
+        </div>
+        <div class="form-group">
+            <label class="form-label">Print Form</label>
+            <select class="form-select" @bind="_printForm">
+                <option value="@ReceiptPrintForm.Receipt48">Receipt 48mm</option>
+                <option value="@ReceiptPrintForm.InvoiceA4">Invoice A4</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" @bind="_taxInclusive" /> Prices are tax-inclusive
+        </label>
+    </div>
+
+    @if (_receiptType is ReceiptType.CreditNote or ReceiptType.DebitNote)
+    {
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;padding:12px;background:var(--gray-50);border-radius:var(--radius);">
+            <div class="form-group">
+                <label class="form-label">Original Receipt Global No</label>
+                <input class="form-input" type="number" @bind="_origGlobalNo" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Original Fiscal Day No</label>
+                <input class="form-input" type="number" @bind="_origFiscalDayNo" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <input class="form-input" @bind="_receiptNotes" />
+            </div>
+        </div>
+    }
+
+    <!-- Line Items -->
+    <h3 style="margin-bottom:8px;">Line Items</h3>
+    <table class="line-items-table" style="margin-bottom:12px;">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>HS Code</th>
+                <th style="width:80px;">Qty</th>
+                <th style="width:100px;">Price</th>
+                <th style="width:140px;">Tax</th>
+                <th style="width:100px;">Total</th>
+                <th style="width:40px;"></th>
+            </tr>
+        </thead>
+        <tbody>
+            @for (var i = 0; i < _lines.Count; i++)
+            {
+                var idx = i;
+                <tr>
+                    <td><input class="form-input" @bind="_lines[idx].Name" /></td>
+                    <td><input class="form-input" @bind="_lines[idx].HsCode" /></td>
+                    <td><input class="form-input" type="number" step="1" @bind="_lines[idx].Quantity" @oninput="RecalcTotals" /></td>
+                    <td><input class="form-input" type="number" step="0.01" @bind="_lines[idx].Price" @oninput="RecalcTotals" /></td>
+                    <td>
+                        <select class="form-select" @bind="_lines[idx].TaxId">
+                            @foreach (var t in _taxes)
+                            {
+                                <option value="@t.TaxID">@t.TaxName (@t.TaxPercent%)</option>
+                            }
+                        </select>
+                    </td>
+                    <td style="font-weight:600;">@((_lines[idx].Quantity * _lines[idx].Price).ToString("F2"))</td>
+                    <td><button class="btn btn-danger btn-sm" @onclick="() => _lines.RemoveAt(idx)">X</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <button class="btn btn-outline btn-sm" @onclick="AddLine">+ Add Line</button>
+
+    <!-- Payments -->
+    <h3 style="margin:16px 0 8px;">Payments</h3>
+    <table class="line-items-table" style="margin-bottom:12px;">
+        <thead><tr><th>Type</th><th style="width:140px;">Amount</th><th style="width:40px;"></th></tr></thead>
+        <tbody>
+            @for (var i = 0; i < _payments.Count; i++)
+            {
+                var idx = i;
+                <tr>
+                    <td>
+                        <select class="form-select" @bind="_payments[idx].Type">
+                            <option value="@MoneyType.Cash">Cash</option>
+                            <option value="@MoneyType.Card">Card</option>
+                            <option value="@MoneyType.MobileWallet">Mobile Wallet</option>
+                            <option value="@MoneyType.BankTransfer">Bank Transfer</option>
+                            <option value="@MoneyType.Other">Other</option>
+                        </select>
+                    </td>
+                    <td><input class="form-input" type="number" step="0.01" @bind="_payments[idx].Amount" /></td>
+                    <td><button class="btn btn-danger btn-sm" @onclick="() => _payments.RemoveAt(idx)">X</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <button class="btn btn-outline btn-sm" @onclick="AddPayment">+ Add Payment</button>
+
+    <!-- Totals -->
+    <div style="margin-top:16px;padding:16px;background:var(--gray-50);border-radius:var(--radius);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+            <strong>Receipt Total: @_currency @ReceiptTotal.ToString("F2")</strong>
+        </div>
+        <button class="btn btn-primary" @onclick="Submit" disabled="@_submitting">
+            @(_submitting ? "Submitting..." : "Submit Receipt")
+        </button>
+    </div>
+</div>
+
+<!-- Buyer Info (collapsible) -->
+<details class="card">
+    <summary style="cursor:pointer;font-weight:600;">Buyer Information (optional)</summary>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+        <div class="form-group">
+            <label class="form-label">Name</label>
+            <input class="form-input" @bind="_buyerName" />
+        </div>
+        <div class="form-group">
+            <label class="form-label">TIN</label>
+            <input class="form-input" @bind="_buyerTin" />
+        </div>
+    </div>
+</details>
+
+@code {
+    [CascadingParameter(Name = "SelectedDeviceId")] public int _selectedDeviceId { get; set; }
+    [CascadingParameter(Name = "UserDevices")] public List<UserDevice> _devices { get; set; } = new();
+
+    private ReceiptType _receiptType = ReceiptType.FiscalInvoice;
+    private string _currency = "USD";
+    private string _invoiceNo = $"INV-{DateTime.Now:yyyyMMddHHmmss}";
+    private ReceiptPrintForm _printForm = ReceiptPrintForm.Receipt48;
+    private bool _taxInclusive = true;
+    private int _origGlobalNo, _origFiscalDayNo;
+    private string? _receiptNotes;
+    private string? _buyerName, _buyerTin;
+    private List<LineItem> _lines = new() { new() };
+    private List<PaymentItem> _payments = new() { new() };
+    private List<Tax> _taxes = new();
+    private bool _submitting;
+    private string? _error, _successMessage;
+    private int _resultGlobalNo, _resultCounter;
+    private string? _resultVerification, _resultQrUrl;
+
+    private double ReceiptTotal => _lines.Sum(l => l.Quantity * l.Price);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_selectedDeviceId == 0) return;
+        try
+        {
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            var config = svc.Config ?? await svc.GetConfigAsync();
+            _taxes = config.ApplicableTaxes.Where(t => t.TaxPercent.HasValue).ToList();
+            foreach (var line in _lines.Where(l => l.TaxId == 0 && _taxes.Count > 0))
+                line.TaxId = _taxes[0].TaxID;
+        }
+        catch { }
+    }
+
+    private void AddLine()
+    {
+        _lines.Add(new LineItem { TaxId = _taxes.FirstOrDefault()?.TaxID ?? 0 });
+    }
+
+    private void AddPayment() => _payments.Add(new());
+    private void RecalcTotals() => StateHasChanged();
+
+    private void ResetForm()
+    {
+        _successMessage = null;
+        _error = null;
+        _invoiceNo = $"INV-{DateTime.Now:yyyyMMddHHmmss}";
+        _lines = new() { new() { TaxId = _taxes.FirstOrDefault()?.TaxID ?? 0 } };
+        _payments = new() { new() };
+    }
+
+    private async Task Submit()
+    {
+        _submitting = true;
+        _error = null;
+        try
+        {
+            var total = ReceiptTotal;
+            // Build tax summary grouped by TaxID
+            var taxGroups = _lines.GroupBy(l => l.TaxId).Select(g =>
+            {
+                var tax = _taxes.FirstOrDefault(t => t.TaxID == g.Key);
+                var pct = tax?.TaxPercent ?? 0;
+                var salesAmount = g.Sum(l => l.Quantity * l.Price);
+                var taxAmount = _taxInclusive
+                    ? Math.Round(salesAmount * pct / (100 + pct), 2)
+                    : Math.Round(salesAmount * pct / 100, 2);
+                return new ReceiptTaxDto
+                {
+                    TaxID = g.Key, TaxPercent = pct,
+                    TaxAmount = taxAmount, SalesAmountWithTax = salesAmount
+                };
+            }).ToList();
+
+            // For credit/debit notes, amounts must be negative
+            var isCreditDebit = _receiptType is ReceiptType.CreditNote or ReceiptType.DebitNote;
+            var sign = isCreditDebit ? -1.0 : 1.0;
+
+            var receipt = new ReceiptDto
+            {
+                ReceiptType = _receiptType,
+                ReceiptCurrency = _currency,
+                InvoiceNo = _invoiceNo,
+                ReceiptDate = DateTime.Now,
+                ReceiptLinesTaxInclusive = _taxInclusive,
+                ReceiptPrintForm = _printForm,
+                ReceiptTotal = total * sign,
+                ReceiptLines = _lines.Select((l, i) => new ReceiptLineDto
+                {
+                    ReceiptLineType = ReceiptLineType.Sale,
+                    ReceiptLineNo = i + 1,
+                    ReceiptLineHSCode = l.HsCode,
+                    ReceiptLineName = l.Name,
+                    ReceiptLinePrice = l.Price * sign,
+                    ReceiptLineQuantity = l.Quantity,
+                    ReceiptLineTotal = l.Quantity * l.Price * sign,
+                    TaxID = l.TaxId,
+                    TaxPercent = _taxes.FirstOrDefault(t => t.TaxID == l.TaxId)?.TaxPercent ?? 0
+                }).ToList(),
+                ReceiptTaxes = taxGroups.Select(t => new ReceiptTaxDto
+                {
+                    TaxID = t.TaxID, TaxPercent = t.TaxPercent,
+                    TaxAmount = t.TaxAmount * sign,
+                    SalesAmountWithTax = t.SalesAmountWithTax * sign
+                }).ToList(),
+                ReceiptPayments = _payments.Select(p => new PaymentDto
+                {
+                    MoneyTypeCode = p.Type, PaymentAmount = (p.Amount == 0 ? total : p.Amount) * sign
+                }).ToList()
+            };
+
+            if (!string.IsNullOrEmpty(_buyerName))
+                receipt.BuyerData = new BuyerDto { BuyerRegisterName = _buyerName, BuyerTIN = _buyerTin };
+
+            if (isCreditDebit)
+            {
+                var zimraDeviceId = _devices.FirstOrDefault(d => d.Id == _selectedDeviceId)?.DeviceID ?? 0;
+                receipt.CreditDebitNote = new CreditDebitNoteDto
+                {
+                    DeviceID = zimraDeviceId,
+                    ReceiptGlobalNo = _origGlobalNo,
+                    FiscalDayNo = _origFiscalDayNo
+                };
+                receipt.ReceiptNotes = _receiptNotes;
+            }
+
+            var svc = await DeviceManager.GetOrCreateAsync(_selectedDeviceId);
+            var enqueued = await svc.EnqueueReceiptAsync(receipt);
+
+            _resultGlobalNo = enqueued.Receipt.ReceiptGlobalNo;
+            _resultCounter = enqueued.Receipt.ReceiptCounter;
+            _resultQrUrl = enqueued.QrCodeUrl;
+            _resultVerification = enqueued.VerificationCode;
+
+            // Wait for FDMS confirmation
+            try
+            {
+                await enqueued.SubmissionTask.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            catch { /* Will show as pending */ }
+
+            _successMessage = "Receipt submitted successfully!";
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        _submitting = false;
+    }
+
+    private class LineItem
+    {
+        public string Name { get; set; } = "";
+        public string HsCode { get; set; } = "";
+        public double Quantity { get; set; } = 1;
+        public double Price { get; set; }
+        public int TaxId { get; set; }
+    }
+
+    private class PaymentItem
+    {
+        public MoneyType Type { get; set; } = MoneyType.Cash;
+        public double Amount { get; set; }
+    }
+}

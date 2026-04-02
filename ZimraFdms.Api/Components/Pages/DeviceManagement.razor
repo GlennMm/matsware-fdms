@@ -1,0 +1,218 @@
+@page "/devices"
+@inject DeviceManager DeviceManager
+@inject IServiceScopeFactory ScopeFactory
+
+<h1 class="page-title">Device Management</h1>
+
+@if (!string.IsNullOrEmpty(_message))
+{
+    <div class="alert @(_messageIsError ? "alert-danger" : "alert-success")">@_message</div>
+}
+
+@if (_showAddForm)
+{
+    <div class="card" style="margin-bottom:24px;">
+        <h3 style="margin-bottom:16px;">Register New Device</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+            <div class="form-group">
+                <label class="form-label">Device Label</label>
+                <input class="form-input" @bind="_newLabel" placeholder="e.g. Main Branch POS" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">ZIMRA Device ID</label>
+                <input class="form-input" type="number" @bind="_newDeviceID" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Serial Number</label>
+                <input class="form-input" @bind="_newSerial" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Activation Key</label>
+                <input class="form-input" @bind="_newActivationKey" />
+            </div>
+            <div class="form-group">
+                <label class="form-label">Environment</label>
+                <select class="form-select" @bind="_newBaseUrl">
+                    <option value="https://fdmsapitest.zimra.co.zw">Test</option>
+                    <option value="https://fdmsapi.zimra.co.zw">Production</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Crypto</label>
+                <select class="form-select" @bind="_newCrypto">
+                    <option value="ecc">ECC (secp256r1)</option>
+                    <option value="rsa">RSA (2048)</option>
+                </select>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" @onclick="RegisterDevice" disabled="@_registering">
+                @(_registering ? "Registering..." : "Register with ZIMRA")
+            </button>
+            <button class="btn btn-outline" @onclick="() => _showAddForm = false">Cancel</button>
+        </div>
+    </div>
+}
+else if (_user?.Role == UserRole.Admin)
+{
+    <button class="btn btn-primary" style="margin-bottom:16px;" @onclick="() => _showAddForm = true">Add Device</button>
+}
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Label</th>
+            <th>Device ID</th>
+            <th>Serial No</th>
+            <th>Environment</th>
+            <th>Status</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var d in _deviceList)
+        {
+            <tr>
+                <td>@d.DeviceLabel</td>
+                <td>@d.DeviceID</td>
+                <td>@d.DeviceSerialNo</td>
+                <td>@(d.BaseUrl.Contains("test") ? "Test" : "Production")</td>
+                <td>
+                    <span class="status-badge @(d.IsActive ? "open" : "closed")">
+                        @(d.IsActive ? "Active" : "Inactive")
+                    </span>
+                </td>
+                <td style="display:flex;gap:4px;">
+                    @if (_user?.Role == UserRole.Admin)
+                    {
+                        <button class="btn btn-outline btn-sm" @onclick="() => ToggleActive(d)">
+                            @(d.IsActive ? "Deactivate" : "Activate")
+                        </button>
+                    }
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    [CascadingParameter(Name = "CurrentUser")] public AppUser? _user { get; set; }
+
+    private List<UserDevice> _deviceList = new();
+    private bool _showAddForm;
+    private bool _registering;
+    private string? _message;
+    private bool _messageIsError;
+
+    // New device form fields
+    private string _newLabel = "", _newSerial = "", _newActivationKey = "";
+    private int _newDeviceID;
+    private string _newBaseUrl = "https://fdmsapitest.zimra.co.zw";
+    private string _newCrypto = "ecc";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevicesAsync();
+    }
+
+    private async Task LoadDevicesAsync()
+    {
+        if (_user == null) return;
+        using var scope = ScopeFactory.CreateScope();
+        var auth = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Services.AuthService>();
+        _deviceList = await auth.GetAccessibleDevicesAsync(_user);
+    }
+
+    private async Task RegisterDevice()
+    {
+        if (_user == null) return;
+        _registering = true;
+        _message = null;
+
+        try
+        {
+            var certsDir = Path.Combine(Directory.GetCurrentDirectory(), "certs", _newDeviceID.ToString());
+            Directory.CreateDirectory(certsDir);
+            var dataDir = Path.Combine(Directory.GetCurrentDirectory(), "data");
+            Directory.CreateDirectory(dataDir);
+
+            // Clean up stale files from any previous registration of this device
+            var pfxPath = Path.Combine(dataDir, $"device-{_newDeviceID}.pfx");
+            var queueDbPath = Path.Combine(dataDir, $"{_newDeviceID}-queue.db");
+            if (File.Exists(pfxPath)) File.Delete(pfxPath);
+            if (File.Exists(queueDbPath)) File.Delete(queueDbPath);
+
+            var device = new UserDevice
+            {
+                OwnerUserId = _user.Id,
+                DeviceLabel = _newLabel,
+                DeviceID = _newDeviceID,
+                DeviceSerialNo = _newSerial,
+                ActivationKey = _newActivationKey,
+                BaseUrl = _newBaseUrl,
+                UseEcc = _newCrypto == "ecc",
+                QueueDbPath = queueDbPath,
+                PrivateKeyPemPath = Path.Combine(certsDir, "device.key"),
+                // Initially null — PFX doesn't exist yet
+                CertificatePfxPath = null
+            };
+
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Data.AppDbContext>();
+            db.Devices.Add(device);
+            await db.SaveChangesAsync();
+
+            // Phase 1: Register with ZIMRA (uses public endpoint, no cert needed)
+            var svc = await DeviceManager.GetOrCreateAsync(device.Id);
+            await svc.RegisterDeviceAsync(
+                privateKeyOutputPath: device.PrivateKeyPemPath!,
+                certificateOutputPath: Path.Combine(certsDir, "device-cert.pem"));
+            DeviceManager.Remove(device.Id);
+
+            // Phase 2: InitializeAsync restores PFX from LiteDB to disk
+            // HttpClient has no cert yet, so GetConfig will fail — that's OK
+            svc = await DeviceManager.GetOrCreateAsync(device.Id);
+            try { await svc.InitializeAsync(); }
+            catch { /* Expected: 401 because HttpClient was built without cert */ }
+            DeviceManager.Remove(device.Id);
+
+            // Phase 3: Update DB with actual PFX path, then rebuild
+            // InitializeAsync wrote PFX next to QueueDbPath
+            device.CertificatePfxPath = pfxPath;
+            db.Devices.Update(device);
+            await db.SaveChangesAsync();
+
+            // Now rebuild — PFX exists on disk, HttpClient will load it
+            svc = await DeviceManager.GetOrCreateAsync(device.Id);
+            await svc.InitializeAsync();
+
+            _message = $"Device '{_newLabel}' registered successfully.";
+            _messageIsError = false;
+            _showAddForm = false;
+            _newLabel = _newSerial = _newActivationKey = "";
+            _newDeviceID = 0;
+            _newCrypto = "ecc";
+            await LoadDevicesAsync();
+        }
+        catch (Exception ex)
+        {
+            _message = $"Registration failed: {ex.Message}";
+            _messageIsError = true;
+        }
+        _registering = false;
+    }
+
+    private async Task ToggleActive(UserDevice device)
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ZimraFdms.Api.Data.AppDbContext>();
+        var d = await db.Devices.FindAsync(device.Id);
+        if (d == null) return;
+        d.IsActive = !d.IsActive;
+        await db.SaveChangesAsync();
+        device.IsActive = d.IsActive;
+        if (!d.IsActive) DeviceManager.Remove(device.Id);
+        _message = $"Device '{device.DeviceLabel}' {(d.IsActive ? "activated" : "deactivated")}.";
+        _messageIsError = false;
+    }
+}
